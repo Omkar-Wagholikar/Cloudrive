@@ -5,6 +5,8 @@ A self hosted, Google Drive style Android client for a Go backend
 box. There's no web or iOS client this app is the only front end for the
 backend, so it covers file storage, sharing, and music library/playback in one app.
 
+Repository: [github.com/Omkar-Wagholikar/CloudDrive-App](https://github.com/Omkar-Wagholikar/CloudDrive-App)
+
 ## Stack
 
   **UI**: Jetpack Compose, Material3, Navigation Compose

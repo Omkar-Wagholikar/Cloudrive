@@ -12,6 +12,10 @@ Cloudrive/
 └── app/       Android client — Jetpack Compose, Retrofit, Media3
 ```
 
+Upstream repositories:
+
+- Android app — [github.com/Omkar-Wagholikar/CloudDrive-App](https://github.com/Omkar-Wagholikar/CloudDrive-App)
+
 ---
 
 ## What it does
