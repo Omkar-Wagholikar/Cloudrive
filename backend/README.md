@@ -420,7 +420,7 @@ The server is designed to be consumed by a native Android app. Recommended stack
 - **LAN fallback** — try `local_url` with 300ms connect timeout, fall back to `url`
 - **Cleartext traffic** — add a `network_security_config.xml` to allow HTTP to the server's IP until HTTPS is configured
 
-See the [Android client guide](docs/android-client.md) for a full walkthrough with suggested build order and Gradle dependencies.
+A native Android client already exists at [`../app`](../app) — see its [README](../app/README.md) and [`docs/API_REFERENCE.md`](../app/docs/API_REFERENCE.md) for how it consumes this API.
 
 ---
 

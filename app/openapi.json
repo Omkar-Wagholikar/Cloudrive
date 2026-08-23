@@ -1,0 +1,2822 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "CloudDrive API",
+    "description": "Self-hosted file storage server with folder organisation, resumable uploads, thumbnails, shared links and LAN-aware download URLs.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8081",
+      "description": "Local development"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine-readable error code",
+                "enum": [
+                  "bad_request",
+                  "not_found",
+                  "name_conflict",
+                  "folder_not_empty",
+                  "session_expired",
+                  "token_invalid",
+                  "quota_exceeded",
+                  "too_large",
+                  "conflict",
+                  "storage_error",
+                  "internal",
+                  "unauthorized"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable message"
+              },
+              "details": {
+                "type": "object",
+                "description": "Optional machine-readable context, e.g. quota_bytes/used_bytes/needed_bytes on quota_exceeded",
+                "additionalProperties": true
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "TokenResponse": {
+        "type": "object",
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "refresh_token": {
+            "type": "string"
+          },
+          "token_type": {
+            "type": "string",
+            "example": "bearer"
+          },
+          "expires_in": {
+            "type": "integer",
+            "description": "Access token lifetime in seconds",
+            "example": 900
+          }
+        },
+        "required": [
+          "access_token",
+          "refresh_token",
+          "token_type",
+          "expires_in"
+        ]
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "username": {
+            "type": "string"
+          },
+          "quota_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "0 = unlimited"
+          },
+          "used_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "trash_retention_days": {
+            "type": "integer",
+            "description": "Days a trashed file is kept before auto-purge. 0 = auto-purge disabled."
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "quota_bytes",
+          "used_bytes",
+          "created_at",
+          "trash_retention_days"
+        ]
+      },
+      "FileItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "folder_id": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "thumb_ready": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2
+            ],
+            "description": "0=pending, 1=ready, 2=failed"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deleted_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "purge_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "When this trashed item will be permanently purged. Only present on GET /trash when server-side retention is enabled."
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "size",
+          "mime_type",
+          "thumb_ready",
+          "created_at"
+        ]
+      },
+      "FileInfo": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/FileItem"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "format": "uri",
+                "description": "Canonical download URL"
+              },
+              "local_url": {
+                "type": "string",
+                "format": "uri",
+                "description": "LAN download URL (omitted if server has no detected LAN IP)"
+              }
+            },
+            "required": [
+              "url"
+            ]
+          }
+        ]
+      },
+      "FileList": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileItem"
+            }
+          }
+        },
+        "required": [
+          "page",
+          "limit",
+          "total",
+          "items"
+        ]
+      },
+      "Folder": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at"
+        ]
+      },
+      "FolderContents": {
+        "type": "object",
+        "properties": {
+          "folder": {
+            "$ref": "#/components/schemas/Folder"
+          },
+          "breadcrumb": {
+            "type": "array",
+            "description": "Ancestor chain from root to this folder",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ]
+            }
+          },
+          "subfolders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Folder"
+            }
+          },
+          "files": {
+            "$ref": "#/components/schemas/FileList"
+          }
+        },
+        "required": [
+          "folder",
+          "breadcrumb",
+          "subfolders",
+          "files"
+        ]
+      },
+      "UploadSession": {
+        "type": "object",
+        "properties": {
+          "upload_id": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "folder_id": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "upload_id",
+          "offset",
+          "total_size",
+          "expires_at"
+        ]
+      },
+      "ShareToken": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "token",
+          "url",
+          "created_at"
+        ]
+      },
+      "NetworkInfo": {
+        "type": "object",
+        "properties": {
+          "local_addresses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "192.168.1.42:8081"
+            ]
+          }
+        },
+        "required": [
+          "local_addresses"
+        ]
+      },
+      "FileCursorList": {
+        "type": "object",
+        "description": "Returned instead of FileList whenever the request includes `limit` and/or `cursor`.",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileItem"
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "next_cursor": {
+            "type": "string",
+            "nullable": true,
+            "description": "Opaque cursor for the next page; null when there are no more results."
+          }
+        },
+        "required": [
+          "files",
+          "total",
+          "next_cursor"
+        ]
+      },
+      "ShareLink": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "file_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "null = never expires"
+          }
+        },
+        "required": [
+          "token",
+          "url",
+          "file_id",
+          "filename",
+          "mime_type",
+          "created_at"
+        ]
+      },
+      "BatchFilesRequest": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "move",
+              "trash",
+              "restore",
+              "delete"
+            ]
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "maxItems": 100
+          },
+          "folder_id": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true,
+            "description": "Destination folder. Required semantics only apply to op=move."
+          }
+        },
+        "required": [
+          "op",
+          "ids"
+        ]
+      },
+      "BatchFilesResponse": {
+        "type": "object",
+        "properties": {
+          "succeeded": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "code",
+                "message"
+              ]
+            }
+          }
+        },
+        "required": [
+          "succeeded",
+          "failed"
+        ]
+      }
+    }
+  },
+  "security": [],
+  "paths": {
+    "/ping": {
+      "get": {
+        "tags": [
+          "Network"
+        ],
+        "summary": "Cheap, unauthenticated reachability probe",
+        "description": "No auth, no DB access. Used by clients to confirm a typed server URL is actually a CloudDrive box, measure latency for LAN-vs-WAN detection, and distinguish \"server down\" from \"wrong network\".",
+        "responses": {
+          "200": {
+            "description": "Service is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "service": {
+                      "type": "string",
+                      "example": "clouddrive"
+                    },
+                    "version": {
+                      "type": "string",
+                      "example": "1.4.2"
+                    },
+                    "server_time": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "service",
+                    "version",
+                    "server_time"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/register": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Register a new user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 64
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 4,
+                    "maxLength": 72
+                  }
+                },
+                "required": [
+                  "username",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "integer",
+                      "format": "int64"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Username taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Obtain access + refresh tokens",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "username",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tokens issued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/token/refresh": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Exchange a refresh token for a new access + refresh token pair",
+        "description": "The supplied refresh token is immediately revoked and replaced. Store the new pair.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "refresh_token": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "refresh_token"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New token pair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired refresh token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Revoke a refresh token",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "refresh_token": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "refresh_token"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Token revoked"
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Get current user info including quota and storage usage",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/network": {
+      "get": {
+        "tags": [
+          "Network"
+        ],
+        "summary": "Get server LAN IP addresses for direct local transfers",
+        "description": "No authentication required. Clients on the same LAN should prefer local_url from file responses.",
+        "responses": {
+          "200": {
+            "description": "LAN addresses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/upload": {
+      "post": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Upload a file (single-shot multipart)",
+        "description": "For files larger than ~100 MB prefer the resumable upload flow at /uploads/resumable.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  },
+                  "folder_id": {
+                    "type": "integer",
+                    "format": "int64",
+                    "description": "Destination folder. Omit for root."
+                  }
+                },
+                "required": [
+                  "file"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "File stored. url and local_url point to the download endpoint.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "filename": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "mime_type": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "local_url": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "filename",
+                    "size",
+                    "mime_type",
+                    "url"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing file field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Folder not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Storage backend error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/files": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "List root-level files (not inside any folder)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque pagination cursor from a previous response's next_cursor. Supplying this (or limit) switches the response shape to FileCursorList."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File list \u2014 FileList by default, FileCursorList when limit and/or cursor are supplied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/FileList"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FileCursorList"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/files/search": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Search files by filename substring",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Substring to search for in filename"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "image",
+                "video",
+                "audio",
+                "pdf",
+                "other"
+              ]
+            },
+            "description": "Narrow results to a mime-type category, applied server-side."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque pagination cursor from a previous response's next_cursor. Supplying this (or limit) switches the response shape to FileCursorList."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching files (FileList for page/limit, FileCursorList when cursor/limit-cursor mode is used)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/FileList"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FileCursorList"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing q parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/files/{id}": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Get file metadata and download URLs",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File metadata with download URLs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Rename and/or move a file",
+        "description": "All fields are optional. Send only what you want to change. Set folder_id to null to move to root.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "filename": {
+                    "type": "string",
+                    "description": "New filename"
+                  },
+                  "folder_id": {
+                    "type": "integer",
+                    "format": "int64",
+                    "nullable": true,
+                    "description": "Destination folder ID. null = move to root."
+                  }
+                }
+              },
+              "examples": {
+                "rename": {
+                  "value": {
+                    "filename": "new-name.jpg"
+                  }
+                },
+                "move": {
+                  "value": {
+                    "folder_id": 5
+                  }
+                },
+                "moveToRoot": {
+                  "value": {
+                    "folder_id": null
+                  }
+                },
+                "both": {
+                  "value": {
+                    "filename": "new.jpg",
+                    "folder_id": 3
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileItem"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Soft-delete a file (move to trash)",
+        "description": "File is not permanently removed. Use DELETE /trash/{id} to purge.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File moved to trash",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "deleted_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/files/{id}/download": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Download the raw file bytes",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File bytes",
+            "headers": {
+              "Content-Disposition": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "attachment; filename=\"photo.jpg\""
+              },
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/files/{id}/thumbnail": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Download a 240px JPEG thumbnail",
+        "description": "Returns 202 while the thumbnail is still being generated, 422 if generation failed.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Thumbnail JPEG bytes",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "public, max-age=86400"
+              }
+            },
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Thumbnail still processing",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds to wait before polling again",
+                "example": 5
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "processing"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Thumbnail generation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "thumbnail_failed"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/files/{id}/share": {
+      "post": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Create a public share link for a file",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expires_in": {
+                    "type": "integer",
+                    "description": "Link lifetime in seconds. Omit for a link that never expires.",
+                    "example": 86400
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Share link created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareToken"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/shared/{token}": {
+      "get": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Download a file using a share token (no auth required)",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File bytes",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Token not found or expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Revoke a share token",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Token revoked"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/thumbnails": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "List all files that have a ready thumbnail",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "image",
+                "video",
+                "audio",
+                "pdf",
+                "other"
+              ]
+            },
+            "description": "Narrow results to a mime-type category, applied server-side."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque pagination cursor from a previous response's next_cursor. Supplying this (or limit) switches the response shape to FileCursorList."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Files with ready thumbnails",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/FileList"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FileCursorList"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trash": {
+      "get": {
+        "tags": [
+          "Trash"
+        ],
+        "summary": "List trashed files",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque pagination cursor from a previous response's next_cursor. Supplying this (or limit) switches the response shape to FileCursorList."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Trashed files. Items include purge_at when server-side retention is enabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/FileList"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FileCursorList"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Trash"
+        ],
+        "summary": "Permanently delete all of my trashed files",
+        "description": "Irreversible. Powers the \"Free up space\" flow.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Purge complete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "purged": {
+                      "type": "integer",
+                      "description": "Number of files permanently deleted"
+                    }
+                  },
+                  "required": [
+                    "purged"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trash/{id}/restore": {
+      "post": {
+        "tags": [
+          "Trash"
+        ],
+        "summary": "Restore a trashed file to its original location",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File restored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "restored"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in trash",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trash/{id}": {
+      "delete": {
+        "tags": [
+          "Trash"
+        ],
+        "summary": "Permanently delete a trashed file from storage",
+        "description": "This is irreversible. The file is removed from SeaweedFS and the database.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Permanently deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in trash",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/uploads/resumable": {
+      "post": {
+        "tags": [
+          "Resumable Upload"
+        ],
+        "summary": "Initialise a resumable upload session",
+        "description": "Creates a session and returns an upload_id. Then PATCH chunks using Content-Range headers.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "filename": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "integer",
+                    "format": "int64",
+                    "description": "Total file size in bytes"
+                  },
+                  "mime_type": {
+                    "type": "string",
+                    "default": "application/octet-stream"
+                  },
+                  "folder_id": {
+                    "type": "integer",
+                    "format": "int64",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "filename",
+                  "size"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "upload_id": {
+                      "type": "string"
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "format": "int64",
+                      "example": 0
+                    }
+                  },
+                  "required": [
+                    "upload_id",
+                    "offset"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Resumable Upload"
+        ],
+        "summary": "List my open (unexpired) resumable upload sessions",
+        "description": "Lets a client rediscover in-flight uploads after a crash, reinstall, or on a second device, without having persisted the upload_id itself.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Open sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/UploadSession"
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessions"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/uploads/resumable/{upload_id}": {
+      "get": {
+        "tags": [
+          "Resumable Upload"
+        ],
+        "summary": "Query resumable upload progress",
+        "description": "Use this after a dropped connection to find the current offset before resuming.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadSession"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found/expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Resumable Upload"
+        ],
+        "summary": "Upload a chunk",
+        "description": "Send raw bytes with a Content-Range header. Repeat until 201 is returned.\n\nContent-Range format: `bytes <start>-<end>/<total>`\n\nReturns 200 with updated offset while upload is incomplete, 201 with the new file record when complete.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "upload_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Content-Range",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "bytes 0-1048575/5242880"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Chunk received, upload still in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "offset": {
+                      "type": "integer",
+                      "format": "int64"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Upload complete \u2014 file created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "filename": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "format": "int64"
+                    },
+                    "mime_type": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "local_url": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "filename",
+                    "size",
+                    "mime_type",
+                    "url"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or out-of-order Content-Range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found or expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/folders": {
+      "get": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "List root-level folders",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Root folders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Folder"
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "Create a folder",
+        "description": "Omit parent_id for a root folder. Nesting is unlimited.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "parent_id": {
+                    "type": "integer",
+                    "format": "int64",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              },
+              "examples": {
+                "root": {
+                  "value": {
+                    "name": "Trips"
+                  }
+                },
+                "nested": {
+                  "value": {
+                    "name": "Japan 2026",
+                    "parent_id": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Folder created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Folder"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Parent folder not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Folder name already exists here",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/folders/{id}": {
+      "get": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "Get folder contents \u2014 subfolders, files and breadcrumb path",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque pagination cursor from a previous response's next_cursor. Supplying this (or limit) switches the response shape to FileCursorList."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Folder contents with breadcrumb",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderContents"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "Delete an empty folder",
+        "description": "Returns 409 if the folder still contains files or subfolders.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Folder deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Folder not empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/shared": {
+      "get": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "List my active share links",
+        "description": "Security-audit surface: \"what have I exposed publicly?\" Returns only the caller's own unexpired links \u2014 server truth, never client-cached.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active share links",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "links": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ShareLink"
+                      }
+                    }
+                  },
+                  "required": [
+                    "links"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/files/batch": {
+      "post": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Apply move/trash/restore/delete to multiple files in one request",
+        "description": "Per-item execution (no cross-item transaction). Always returns a 207 body listing which ids succeeded and which failed, so the client can render a coherent partial-failure result instead of fanning out N sequential requests. Max 100 ids per request. `delete` and `restore` operate on trashed files, matching DELETE /trash/{id} and POST /trash/{id}/restore.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchFilesRequest"
+              },
+              "examples": {
+                "move": {
+                  "value": {
+                    "op": "move",
+                    "ids": [
+                      1,
+                      2,
+                      3
+                    ],
+                    "folder_id": 7
+                  }
+                },
+                "trash": {
+                  "value": {
+                    "op": "trash",
+                    "ids": [
+                      1,
+                      2,
+                      3
+                    ]
+                  }
+                },
+                "restore": {
+                  "value": {
+                    "op": "restore",
+                    "ids": [
+                      1,
+                      2,
+                      3
+                    ]
+                  }
+                },
+                "delete": {
+                  "value": {
+                    "op": "delete",
+                    "ids": [
+                      1,
+                      2,
+                      3
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "207": {
+            "description": "Per-item results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchFilesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (bad op, empty ids, or over the 100-item cap)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "folder_id not found (move only)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Auth",
+      "description": "Registration, login, token refresh and logout"
+    },
+    {
+      "name": "Network",
+      "description": "LAN address discovery for direct local transfers"
+    },
+    {
+      "name": "Files",
+      "description": "Upload, list, search, rename, move, download and delete files"
+    },
+    {
+      "name": "Resumable Upload",
+      "description": "Session-based chunked upload for large files"
+    },
+    {
+      "name": "Sharing",
+      "description": "Public share links \u2014 no auth required to download"
+    },
+    {
+      "name": "Trash",
+      "description": "Soft-delete bin \u2014 restore or permanently purge files"
+    },
+    {
+      "name": "Folders",
+      "description": "Nested folder hierarchy with breadcrumb navigation"
+    }
+  ]
+}
